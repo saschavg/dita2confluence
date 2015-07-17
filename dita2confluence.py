@@ -1,4 +1,4 @@
-#!/usr/local/bin/python
+#!/usr/bin/env python
 
 prog_description='''
     This script uploads dita generated xhtml to confluence. It must be provided with the index.html containing the table of contents. 
@@ -53,6 +53,13 @@ def updateLinks(xml):
         link.parentNode.replaceChild(acLink, link)
         
 def fetchTitle(xml):
+    '''
+    try to identify the title from the given xml fragment.
+    first it will try to find the title in a meta element with name attribute "DC.Title"
+    if not found, it will try to find a "title" element and use its contents as the title
+    if still not found it will check if the given xml is an anchor tag. If so, it will use its contents as the title.
+    if no matches were found, it returns "None"
+    '''
     title=None
     metaEls = xml.getElementsByTagName('meta')
     for el in metaEls :
@@ -62,7 +69,10 @@ def fetchTitle(xml):
             break
     if title == None:
         tn = xml.getElementsByTagName('title')
-        title = ''.join([t.nodeValue for t in tn[0].childNodes])
+        if len(tn) > 0:
+            title = ''.join([t.nodeValue for t in tn[0].childNodes])
+    if title == None and xml.tagName=='a':
+        title = ''.join([t.nodeValue for t in xml.childNodes])
 
     return title
 
@@ -181,7 +191,9 @@ def parse_toc(toc_file, rel_basedir):
     ]
     '''
     xml= minidom.parse(toc_file)
+    title = fetchTitle(xml)
     body = xml.getElementsByTagName('body')[0]
+    flat_toc=[]
 
     def get_toc(node, toc):
 
@@ -196,15 +208,19 @@ def parse_toc(toc_file, rel_basedir):
                 if child.nodeName == 'a' :
                     link={}
                     link['path']     = os.path.abspath( rel_basedir + "/" + child.getAttribute('href'))
-                    link['title']    = child.nodeValue
+                    link['title']    = fetchTitle(child)
                     toc['links'].append(link)
+                    flat_toc.append(link)
 
                 get_toc(child, new_toc or toc )
         return toc
 
-
-    toc = {'children': [], "links":[ {"path":toc_file} ] }
-    return get_toc(body,toc)
+    link = {"path":toc_file, "title":title}
+    flat_toc.append(link)
+    toc = {'children': [], "links":[link] }
+    toc = get_toc(body,toc)
+    toc["flat_toc"] = flat_toc 
+    return toc 
 
 def gen_pages(toc, space, parent_page, **kwargs):
 
@@ -219,11 +235,17 @@ def printToc(toc, space=""):
     for child in toc['children']:
         printToc(child, space+"   ")
 
+def find_obsolete_pages(applicable_pages, toc):
+    titles = [p['title'].lower() for p in toc["flat_toc"]]
+    obsolete_pages = [p for p in applicable_pages if p['title'].lower() not in titles]
+    return obsolete_pages
+
 if __name__ == "__main__":
 
     # generic input properties
 
     parser = argparse.ArgumentParser(description=prog_description)
+    parser.add_argument('-d', dest='delete_obsolete_pages', action='store_true', default=False, help='delete obsolete pages under given root page. see "-r option"')
     parser.add_argument('-u', dest='confluence_user', required=True, help='The confluence user used to upload')
     parser.add_argument('-p', dest='confluence_pass', required=True, help='Password of the confluence user')
     parser.add_argument('-s', dest='confluence_space', required=True, help='name of the confluence space')
@@ -232,6 +254,7 @@ if __name__ == "__main__":
     parser.add_argument('toc_file', help='this is the index.html file containig the table of contents')
     args = parser.parse_args()
 
+    args.toc_file = os.path.abspath(args.toc_file)
     if not os.path.isfile(args.toc_file):
         print 'given file "'+args.toc_file+'" does not exist' 
         parser.print_help()
@@ -272,11 +295,18 @@ if __name__ == "__main__":
     printToc(toc)
     print "---------------------------------------------------------------------------"
 
-    #identify all pages that are decendants of the home page
-    #applicable_pages = filter_decendant_pages(root_page, pages)
+    #identify all pages that are decendants of the root page
+    applicable_pages = filter_decendant_pages(root_page, pages)
 
-    #removePages(service, token, pages)
+    obsolete_pages = find_obsolete_pages(applicable_pages, toc)
+    if len(obsolete_pages) > 0:
+        print "Found obsolete pages under the given root:"
+        for p in obsolete_pages: print "   -  "+p['title']
+    
+        if args.delete_obsolete_pages:
+            removePages(service, token, obsolete_pages)
+            print "deleted obsolete pages"
 
-    # upload the pages
-    gen_pages(toc, space="", parent_page=root_page, current_pages=pages, rpc_service=service, token=token)
-    #pp.pprint(toc)
+    # upload the pages. We wil only override pages that are decendants of the given root page. If a page
+    # with the same title already exists outside this tree, confluence will throw an error.
+    gen_pages(toc, space="", parent_page=root_page, current_pages=applicable_pages, rpc_service=service, token=token)
