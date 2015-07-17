@@ -9,16 +9,44 @@ prog_description='''
     be overwritten. Conflence will keep the old version. Also comments on the pages will be preserved.
 '''
 
+import socket
 import sys, getopt, argparse
 import re
-import os 
+import os
 import mimetypes 
 import pprint
-import xmlrpclib
+import xmlrpclib, urllib2
 import binascii
 from xml.dom import minidom
 
 pp = pprint.PrettyPrinter(indent=2)
+
+class Urllib2Transport(xmlrpclib.Transport):
+    def __init__(self, opener=None, https=False, use_datetime=0):
+        xmlrpclib.Transport.__init__(self, use_datetime)
+        self.opener = opener or urllib2.build_opener()
+        self.https = https
+    
+    def request(self, host, handler, request_body, verbose=0):
+        self.verbose = verbose
+        proto = ('http', 'https')[bool(self.https)]
+        req = urllib2.Request('%s://%s%s' % (proto, host, handler), request_body)
+        req.add_header('Content-Length', str(len(request_body)))
+        req.add_header('Content-Type', "text/xml")
+        req.add_header('User-agent', self.user_agent)
+        if self.verbose:
+            print req.get_full_url()
+            print req.header_items()
+            print req.get_data()
+        resp = self.opener.open(req)
+        return self.parse_response(resp)
+
+ 
+class HTTPProxyTransport(Urllib2Transport):
+    def __init__(self, proxies, use_datetime=0):
+        #Urllib2Transport.__init__(self, None, use_datetime)
+        opener = urllib2.build_opener(urllib2.ProxyHandler(proxies))
+        Urllib2Transport.__init__(self, opener, use_datetime)
 
 def fetchImages(xml, rel_basedir):
     images = xml.getElementsByTagName('img')
@@ -250,6 +278,7 @@ if __name__ == "__main__":
     parser.add_argument('-p', dest='confluence_pass', required=True, help='Password of the confluence user')
     parser.add_argument('-s', dest='confluence_space', required=True, help='name of the confluence space')
     parser.add_argument('-r', dest='confluence_root_page', required=True, help='this is the title of the page under which the files should be uploaded')
+    parser.add_argument('--proxy', dest='proxy', default=None, help='configure proxy: http://user:pass@host:port')
     parser.add_argument('--url', dest='confluence_rpc_url', required=True, help='url of the confluence rpc service: "https://CONFLUENCE_HOST/rpc/xmlrpc"')
     parser.add_argument('toc_file', help='this is the index.html file containig the table of contents')
     args = parser.parse_args()
@@ -268,8 +297,13 @@ if __name__ == "__main__":
 
     toc = parse_toc(args.toc_file, basedir)
 
-    # generic properties
-    service     = xmlrpclib.Server(  args.confluence_rpc_url )
+    
+    if args.proxy:
+        transport = HTTPProxyTransport({'http':args.proxy})
+        service     = xmlrpclib.Server(  args.confluence_rpc_url, verbose=0, transport=transport)
+    else:
+        service     = xmlrpclib.Server(  args.confluence_rpc_url, verbose=0, transport=transport)
+
     token       = service.confluence2.login(args.confluence_user, args.confluence_pass)
     # fetch space information
     space       = service.confluence2.getSpace(token,args.confluence_space)
