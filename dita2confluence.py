@@ -302,7 +302,7 @@ if __name__ == "__main__":
         transport = HTTPProxyTransport({'http':args.proxy})
         service     = xmlrpclib.Server(  args.confluence_rpc_url, verbose=0, transport=transport)
     else:
-        service     = xmlrpclib.Server(  args.confluence_rpc_url, verbose=0, transport=transport)
+        service     = xmlrpclib.Server(  args.confluence_rpc_url, verbose=0)
 
     token       = service.confluence2.login(args.confluence_user, args.confluence_pass)
     # fetch space information
