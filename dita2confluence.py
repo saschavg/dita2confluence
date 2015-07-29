@@ -70,6 +70,10 @@ def updateLinks(xml):
     for link in links:
         title = ''.join([t.nodeValue for t in link.childNodes])
 
+        #remove any line breaks that might have been introduced by tidy
+        s = re.compile('\s+')
+        title = s.sub(' ', title)
+
         acLink= xml.createElement('ac:link')
         riPage = xml.createElement('ri:page')
         riPage.setAttribute('ri:content-title', title)
@@ -102,7 +106,10 @@ def fetchTitle(xml):
     if title == None and xml.tagName=='a':
         title = ''.join([t.nodeValue for t in xml.childNodes])
 
-    return title
+    #remove any line breaks that might have been introduced by tidy
+    s = re.compile('\s+')
+    title = s.sub(' ', title)
+    return title.strip()
 
 def removePages(rpc_service, token, pages):
     for page in pages:
@@ -229,7 +236,7 @@ def parse_toc(toc_file, rel_basedir):
             if child.nodeType == child.ELEMENT_NODE :
                 new_toc = None
 
-                if child.getAttribute('class') == "topicref" : 
+                if child.nodeName== 'li' :
                     new_toc= {'children': [], "links":[] }
                     toc['children'].append(new_toc)
 
@@ -296,7 +303,6 @@ if __name__ == "__main__":
     #confluence_space= "DOC3"
 
     toc = parse_toc(args.toc_file, basedir)
-
     
     if args.proxy:
         transport = HTTPProxyTransport({'http':args.proxy})
