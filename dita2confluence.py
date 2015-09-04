@@ -21,6 +21,8 @@ from xml.dom import minidom
 
 pp = pprint.PrettyPrinter(indent=2)
 
+DO_UPLOAD=False
+
 class Urllib2Transport(xmlrpclib.Transport):
     def __init__(self, opener=None, https=False, use_datetime=0):
         xmlrpclib.Transport.__init__(self, use_datetime)
@@ -113,8 +115,11 @@ def fetchTitle(xml):
 
 def removePages(rpc_service, token, pages):
     for page in pages:
-        print "delete page : " + page['title']
-        rpc_service.confluence2.removePage(token,page.get('id'))
+        if DO_UPLOAD:
+            print "delete page : " + page['title']
+            rpc_service.confluence2.removePage(token,page.get('id'))
+        else:
+            print "simulate: delete page : " + page['title']
 
 def uploadImages(service, images, pageId):
     for img in images :
@@ -126,7 +131,9 @@ def uploadImages(service, images, pageId):
         attachement['fileName'] = "carwash.jpg"
         #attachement['fileSize'] = len(data) 
         attachement['contentType'] = mimetypes.guess_type(img['path'])[0]
-        attach = service.confluence2.addAttachment(token, pageId, attachement, xmlrpclib.Binary(data))
+        attach = {}
+        if DO_UPLOAD:
+            attach = service.confluence2.addAttachment(token, pageId, attachement, xmlrpclib.Binary(data))
         return attach
 
 def filter_decendant_pages(root_page, pages):
@@ -159,7 +166,12 @@ def storePage(html_file, parent_page, current_pages, rpc_service, token):
     print title;
     images      = fetchImages(xml_doc, rel_basedir)
     updateLinks(xml_doc) 
-    content     = xml_doc.getElementsByTagName('body')[0].toxml()
+    content     = xml_doc.getElementsByTagName('body')[0]
+
+    #remove title from HTML as confluence already creates a title for each page
+    h1_title = content.getElementsByTagName('h1')
+    if len(h1_title):
+            content.removeChild(h1_title[0])
 
     page = {}
 
@@ -173,13 +185,17 @@ def storePage(html_file, parent_page, current_pages, rpc_service, token):
 
     #set page properties
     page['title']   = title
-    page['content'] = content 
+    page['content'] = content.toxml() 
     page['space']   = parent_page['space'] 
     page['parentId']= parent_page['id'] 
 
     #uploading the page
     print "uploading page"
-    page = rpc_service.confluence2.storePage(token, page)
+    if DO_UPLOAD:
+        page = rpc_service.confluence2.storePage(token, page)
+    else:
+        #dummy page object
+        page = {"id":"0", "parentId":"0", "space": "TEST_TEST" }
 
     print "id: "+ page['id'] 
     print "parentId : "+ page['parentId'] 
@@ -259,14 +275,23 @@ def parse_toc(toc_file, rel_basedir):
 
 def gen_pages(toc, space, parent_page, **kwargs):
 
-    path = toc['links'][0]['path']
-    page = storePage(path, parent_page=parent_page, **kwargs)
+    if len(toc['links']):
+        path = toc['links'][0]['path']
+        page = storePage(path, parent_page=parent_page, **kwargs)
+    else:
+        page = parent_page
+
     for child in toc['children']:
         gen_pages(child, space+"    ", parent_page=page, **kwargs)
 
 def printToc(toc, space=""):
-    path = toc['links'][0]['path']
-    print space+path 
+    if len(toc['links']) :
+        path = toc['links'][0]['path']
+        print space+path 
+    else:
+        # this happens when a branch in de index.html file does not contain a link. I.e. a LI tag that does not
+        # contain an A tag as a direct child.
+        print space+ "ERROR: found a child in the index.html which is not a link and has no corresponding page"
     for child in toc['children']:
         printToc(child, space+"   ")
 
@@ -276,6 +301,9 @@ def find_obsolete_pages(applicable_pages, toc):
     return obsolete_pages
 
 if __name__ == "__main__":
+
+    #set to False to run the script but do not actually upload any files
+    DO_UPLOAD=True
 
     # generic input properties
 
