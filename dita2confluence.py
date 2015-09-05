@@ -66,6 +66,15 @@ def fetchImages(xml, rel_basedir):
         img.parentNode.replaceChild(acImg, img)
     return a_images
 
+def updateKbdTags(xml):
+    tags= xml.getElementsByTagName('ksb')
+    for tag in tags:
+       nt = xml.createElement('span')
+       nt.setAttribute('class', tag.getAttribute('class'))
+       for cn in tag.childNodes:
+           nt.appendChild(cn.cloneNode(True))
+       tag.parentNode.replace(tag, nt)
+
 def updateLinks(xml):
 
     links = xml.getElementsByTagName('a')
@@ -128,12 +137,13 @@ def uploadImages(service, images, pageId):
             data = f.read()
 
         attachement = {}
-        attachement['fileName'] = "carwash.jpg"
+        attachement['fileName'] = os.path.basename(img['path'])
         #attachement['fileSize'] = len(data) 
         attachement['contentType'] = mimetypes.guess_type(img['path'])[0]
         attach = {}
         if DO_UPLOAD:
             attach = service.confluence2.addAttachment(token, pageId, attachement, xmlrpclib.Binary(data))
+        print "uploaded :" + img['path']
         return attach
 
 def filter_decendant_pages(root_page, pages):
@@ -157,11 +167,45 @@ def fetch_space_home_page(space, current_pages):
         sys.exit(1)
     return r[0]
 
+def storeDummyPage(title, parent_page, current_pages, rpc_service, token):
+    page = {}
+
+    #check if page already exists and update in that case
+    r = [p for p in current_pages if p['title'] == title]
+    if len(r) > 0 :
+        print "updating existing page: " + title
+        page = r[0]
+    else : 
+        print "creating new page: " + title
+
+    #set page properties
+    page['title']   = title
+    page['content'] = "" 
+    page['space']   = parent_page['space'] 
+    page['parentId']= parent_page['id'] 
+
+    #uploading the page
+    print "uploading page"
+    if DO_UPLOAD:
+        page = rpc_service.confluence2.storePage(token, page)
+    else:
+        #dummy page object
+        page['id'] = 0
+        page['parentId'] = 0
+
+    print "id: "+ page['id'] 
+    print "parentId : "+ page['parentId'] 
+    return page
+
 def storePage(html_file, parent_page, current_pages, rpc_service, token):
 
     print "\nstoring page: " + html_file
     rel_basedir = os.path.dirname(html_file)
-    xml_doc     = minidom.parse(html_file)
+    with open(html_file,'r') as f:
+        html = f.read()
+    html = html.replace('<kbd', '<span')
+    html = html.replace('</kbd>', '</span>')
+    xml_doc     = minidom.parseString(html)
     title       = fetchTitle(xml_doc)
     print title;
     images      = fetchImages(xml_doc, rel_basedir)
@@ -253,8 +297,14 @@ def parse_toc(toc_file, rel_basedir):
                 new_toc = None
 
                 if child.nodeName== 'li' :
+
                     new_toc= {'children': [], "links":[] }
                     toc['children'].append(new_toc)
+
+                    s_node = child.toxml()
+                    res = re.findall(r'<li>([^<]+)<ul>', s_node)
+                    for r in res:
+                        new_toc['links'].append({'title':r})
 
                 if child.nodeName == 'a' :
                     link={}
@@ -276,10 +326,12 @@ def parse_toc(toc_file, rel_basedir):
 def gen_pages(toc, space, parent_page, **kwargs):
 
     if len(toc['links']):
-        path = toc['links'][0]['path']
-        page = storePage(path, parent_page=parent_page, **kwargs)
-    else:
-        page = parent_page
+        if 'path' in toc['links'][0]:
+            path = toc['links'][0]['path']
+            page = storePage(path, parent_page=parent_page, **kwargs)
+        else:
+            title = toc['links'][0]['title']
+            page = storeDummyPage(title, parent_page=parent_page, **kwargs)
 
     toc['page'] = page
 
@@ -293,12 +345,26 @@ def gen_pages(toc, space, parent_page, **kwargs):
             if i==0 : continue
             pageId = child['page']['id']
             targetId = toc['children'][i-1]['page']['id']
-            res = service.confluence2.movePage(token, pageId, targetId, 'below')
+            try:
+                res = service.confluence2.movePage(token, pageId, targetId, 'below')
+            except Exception as e:
+                pp.pprint(page)
+                print " current path: %s" % (path)
+                print " current page: %s : %s" % (page['title'], page['id'])
+                pp.pprint(toc)
+                pp.pprint([ (c['page']['title'],c['page']['id']) for c in toc['children']])
+                print "page :" + pageId
+                print "target:" + targetId
+                pp.pprint(e)
 
 def printToc(toc, space=""):
     if len(toc['links']) :
-        path = toc['links'][0]['path']
-        print space+path 
+        if 'path' in toc['links'][0]:
+            path = toc['links'][0]['path']
+            print space+path 
+        else:
+            title = toc['links'][0]['title']
+            print space+title
     else:
         # this happens when a branch in de index.html file does not contain a link. I.e. a LI tag that does not
         # contain an A tag as a direct child.
