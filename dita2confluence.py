@@ -281,8 +281,19 @@ def gen_pages(toc, space, parent_page, **kwargs):
     else:
         page = parent_page
 
+    toc['page'] = page
+
     for child in toc['children']:
         gen_pages(child, space+"    ", parent_page=page, **kwargs)
+    
+    if len(toc['children']) > 0:
+        # order pages in line with the TOC
+        token = kwargs['token']
+        for i,child in enumerate(toc['children']):
+            if i==0 : continue
+            pageId = child['page']['id']
+            targetId = toc['children'][i-1]['page']['id']
+            res = service.confluence2.movePage(token, pageId, targetId, 'below')
 
 def printToc(toc, space=""):
     if len(toc['links']) :
