@@ -236,7 +236,11 @@ def storePage(html_file, parent_page, current_pages, rpc_service, token):
     #uploading the page
     print "uploading page"
     if DO_UPLOAD:
-        page = rpc_service.confluence2.storePage(token, page)
+        try:
+            page = rpc_service.confluence2.storePage(token, page)
+        except Exception as e:
+            print page
+            raise e
     else:
         #dummy page object
         page = {"id":"0", "parentId":"0", "space": "TEST_TEST" }
@@ -377,6 +381,13 @@ def find_obsolete_pages(applicable_pages, toc):
     obsolete_pages = [p for p in applicable_pages if p['title'].lower() not in titles]
     return obsolete_pages
 
+def find_conflicting_pages(all_pages, applicable_pages, root_page, toc):
+    titles = [p['title'].lower() for p in toc["flat_toc"]]
+    desc_pages= [p['title'].lower() for p in applicable_pages]
+    g = lambda x, y, z: x not in y and x in z 
+    conflicting_pages = [p for p in all_pages if g(p['title'].lower(), desc_pages, titles) ]
+    return conflicting_pages
+
 if __name__ == "__main__":
 
     #set to False to run the script but do not actually upload any files
@@ -385,7 +396,8 @@ if __name__ == "__main__":
     # generic input properties
 
     parser = argparse.ArgumentParser(description=prog_description)
-    parser.add_argument('-d', dest='delete_obsolete_pages', action='store_true', default=False, help='delete obsolete pages under given root page. see "-r option"')
+    parser.add_argument('--clear-space', dest='clear_space', action='store_true', default=False, help='remove all pages of given space. This will also delete comments.')
+    parser.add_argument('-d', dest='delete_obsolete_pages',  action='store_true', default=False, help='delete obsolete pages under given root page. see "-r option"')
     parser.add_argument('-u', dest='confluence_user', required=True, help='The confluence user used to upload')
     parser.add_argument('-p', dest='confluence_pass', required=True, help='Password of the confluence user')
     parser.add_argument('-s', dest='confluence_space', required=True, help='name of the confluence space')
@@ -431,6 +443,16 @@ if __name__ == "__main__":
         if p["title"] == args.confluence_root_page:
             root_page = p
 
+    # delete all pages except the root page. Only if "clear-space" option is provided
+    if args.clear_space :
+        print "Following pages will be deleted:"
+        pages_to_delete = [p for p in pages if p['id'] is not root_page['id']]
+        for p in pages_to_delete : print "- %(title)s" % p
+        inp = raw_input("Realy delete all above pages and comments? [Y/N]")
+        if inp.lower() == 'y':
+            removePages(service, token, pages_to_delete)
+        pages = service.confluence2.getPages(token,args.confluence_space)
+
     if not root_page or not args.confluence_root_page:
         print "Error: root '"+args.confluence_root_page+"'page not found"
         sys.exit(2)
@@ -442,6 +464,28 @@ if __name__ == "__main__":
 
     #identify all pages that are decendants of the root page
     applicable_pages = filter_decendant_pages(root_page, pages)
+
+    #check for existing pages outside the root that have titles that conflict with
+    #those of pages we want to upload
+    conflicting_pages = find_conflicting_pages(pages, applicable_pages, root_page, toc)
+    while len(conflicting_pages) > 0:
+        print "Found existing pages outside the given page_root that conflict with new pages"
+        print "These pages should be removed, renamed, or moved under the root page for upload to succeed"
+        print "When moved the page will be overwritten, but the history and comments are kept"
+        for p in conflicting_pages:
+            print "   -  %(title)s : %(url)s" % p
+            inp = raw_input("Remove [R], Move [M], Abort [A], do Nothing [N]")
+            if inp.lower() == 'r':
+                removePages(service, token, [p])
+            elif inp.lower() == 'm':
+                res = service.confluence2.movePage(token, p['id'], root_page['id'], 'append')
+                print "moved page"
+            elif inp.lower() == 'a':
+                exit()
+        # update list of pages and check if we still have conflicts
+        pages = service.confluence2.getPages(token,args.confluence_space)
+        applicable_pages = filter_decendant_pages(root_page, pages)
+        conflicting_pages = find_conflicting_pages(pages, applicable_pages, root_page, toc)
 
     obsolete_pages = find_obsolete_pages(applicable_pages, toc)
     if len(obsolete_pages) > 0:
