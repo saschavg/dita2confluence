@@ -1,22 +1,22 @@
 #!/usr/bin/env python
 
+#revision: $Id$
+
 prog_description='''
-    This script uploads dita generated xhtml to confluence. It must be provided with the index.html containing the table of contents. 
-    All files including the toc it self will be uploaded to confluence preserving the structure of the TOC. 
+    This script uploads dita generated xhtml to confluence. It must be provided with the index.html containing the table of contents.
+    All files including the toc it self will be uploaded to confluence preserving the structure of the TOC.
     it converts links and images to the confluence storage format. Links are changed to work in confluence. Images are uploaded as
-    attachements to the relevant pages. 
+    attachements to the relevant pages.
     The tile of a page is used as the identifier for the pages in confluence. When uploading, existing pages with the same title will
     be overwritten. Conflence will keep the old version. Also comments on the pages will be preserved.
 '''
 
-import socket
-import sys, getopt, argparse
+import sys, argparse
 import re
 import os
-import mimetypes 
+import mimetypes
 import pprint
 import xmlrpclib, urllib2
-import binascii
 from xml.dom import minidom
 
 pp = pprint.PrettyPrinter(indent=2)
@@ -28,7 +28,7 @@ class Urllib2Transport(xmlrpclib.Transport):
         xmlrpclib.Transport.__init__(self, use_datetime)
         self.opener = opener or urllib2.build_opener()
         self.https = https
-    
+
     def request(self, host, handler, request_body, verbose=0):
         self.verbose = verbose
         proto = ('http', 'https')[bool(self.https)]
@@ -43,7 +43,7 @@ class Urllib2Transport(xmlrpclib.Transport):
         resp = self.opener.open(req)
         return self.parse_response(resp)
 
- 
+
 class HTTPProxyTransport(Urllib2Transport):
     def __init__(self, proxies, use_datetime=0):
         #Urllib2Transport.__init__(self, None, use_datetime)
@@ -58,7 +58,7 @@ def fetchImages(xml, rel_basedir):
             "path" : os.path.abspath(rel_basedir + "/" + img.getAttribute('src')),
             "name" : os.path.basename(img.getAttribute('src')),
         })
-        
+
         acAttach = xml.createElement('ri:attachment')
         acAttach.setAttribute('ri:filename', a_images[-1]['name'])
         acImg = xml.createElement('ac:image')
@@ -78,7 +78,9 @@ def updateKbdTags(xml):
 def updateLinks(xml):
 
     links = xml.getElementsByTagName('a')
-    for link in links:
+    for link in filter(
+            lambda l: not re.match('^https?://', l.getAttribute('href')), links):
+        print '--> Processing {}'.format(link.getAttribute('href'))
         title = ''.join([t.nodeValue for t in link.childNodes])
 
         #remove any line breaks that might have been introduced by tidy
@@ -94,7 +96,7 @@ def updateLinks(xml):
         acLink.appendChild(riPage)
         acLink.appendChild(acPTLB)
         link.parentNode.replaceChild(acLink, link)
-        
+
 def fetchTitle(xml):
     '''
     try to identify the title from the given xml fragment.
@@ -106,9 +108,9 @@ def fetchTitle(xml):
     title=None
     metaEls = xml.getElementsByTagName('meta')
     for el in metaEls :
-        name = el.getAttribute('name') 
-        if name == 'DC.Title' : 
-            title = el.getAttribute('content') 
+        name = el.getAttribute('name')
+        if name == 'DC.Title' :
+            title = el.getAttribute('content')
             break
     if title == None:
         tn = xml.getElementsByTagName('title')
@@ -138,13 +140,11 @@ def uploadImages(service, images, pageId):
 
         attachement = {}
         attachement['fileName'] = os.path.basename(img['path'])
-        #attachement['fileSize'] = len(data) 
+        #attachement['fileSize'] = len(data)
         attachement['contentType'] = mimetypes.guess_type(img['path'])[0]
-        attach = {}
         if DO_UPLOAD:
-            attach = service.confluence2.addAttachment(token, pageId, attachement, xmlrpclib.Binary(data))
+            service.confluence2.addAttachment(token, pageId, attachement, xmlrpclib.Binary(data))
         print "uploaded :" + img['path']
-        return attach
 
 def filter_decendant_pages(root_page, pages):
     filtered_pages = []
@@ -154,10 +154,10 @@ def filter_decendant_pages(root_page, pages):
 
         while parentId != None and parentId != root_page['id'] :
             parentId = next( (p['parentId'] for p in pages if p['id'] == parentId), None)
-        
+
         if parentId != None :
             filtered_pages.append(page)
-                
+
     return filtered_pages
 
 def fetch_space_home_page(space, current_pages):
@@ -175,14 +175,14 @@ def storeDummyPage(title, parent_page, current_pages, rpc_service, token):
     if len(r) > 0 :
         print "updating existing page: " + title
         page = r[0]
-    else : 
+    else :
         print "creating new page: " + title
 
     #set page properties
     page['title']   = title
-    page['content'] = "" 
-    page['space']   = parent_page['space'] 
-    page['parentId']= parent_page['id'] 
+    page['content'] = ""
+    page['space']   = parent_page['space']
+    page['parentId']= parent_page['id']
 
     #uploading the page
     print "uploading page"
@@ -193,8 +193,8 @@ def storeDummyPage(title, parent_page, current_pages, rpc_service, token):
         page['id'] = 0
         page['parentId'] = 0
 
-    print "id: "+ page['id'] 
-    print "parentId : "+ page['parentId'] 
+    print "id: "+ page['id']
+    print "parentId : "+ page['parentId']
     return page
 
 def storePage(html_file, parent_page, current_pages, rpc_service, token):
@@ -209,7 +209,7 @@ def storePage(html_file, parent_page, current_pages, rpc_service, token):
     title       = fetchTitle(xml_doc)
     print title;
     images      = fetchImages(xml_doc, rel_basedir)
-    updateLinks(xml_doc) 
+    updateLinks(xml_doc)
     content     = xml_doc.getElementsByTagName('body')[0]
 
     #remove title from HTML as confluence already creates a title for each page
@@ -224,14 +224,14 @@ def storePage(html_file, parent_page, current_pages, rpc_service, token):
     if len(r) > 0 :
         print "updating existing page: " + title
         page = r[0]
-    else : 
+    else :
         print "creating new page: " + title
 
     #set page properties
     page['title']   = title
-    page['content'] = content.toxml() 
-    page['space']   = parent_page['space'] 
-    page['parentId']= parent_page['id'] 
+    page['content'] = content.toxml()
+    page['space']   = parent_page['space']
+    page['parentId']= parent_page['id']
 
     #uploading the page
     print "uploading page"
@@ -245,8 +245,8 @@ def storePage(html_file, parent_page, current_pages, rpc_service, token):
         #dummy page object
         page = {"id":"0", "parentId":"0", "space": "TEST_TEST" }
 
-    print "id: "+ page['id'] 
-    print "parentId : "+ page['parentId'] 
+    print "id: "+ page['id']
+    print "parentId : "+ page['parentId']
 
     if len(images) > 0 :
         print "uploading images"
@@ -261,16 +261,16 @@ def storePage(html_file, parent_page, current_pages, rpc_service, token):
 
 def parse_toc(toc_file, rel_basedir):
     '''
-    read the html file containing the table of contents and produce a nested list of dictionaries 
+    read the html file containing the table of contents and produce a nested list of dictionaries
     repesenting the TOC structure. Each dictionary in the list holds a reference to the html file
     and the tile of that file.
 
     below a representation of the structure produced:
 
-    [ 
+    [
         {
             children: [
-               { 
+               {
                     children : [{}]
                     links : [{}]
 
@@ -280,7 +280,7 @@ def parse_toc(toc_file, rel_basedir):
             links: [
                 {
                     path : #absolute path to the original HTML file referenced in the index. this is the href of the anchor tag
-                    title: # title of the file. this is the contents of the anchor tag 
+                    title: # title of the file. this is the contents of the anchor tag
                 },
                 ...
             ]
@@ -324,8 +324,8 @@ def parse_toc(toc_file, rel_basedir):
     flat_toc.append(link)
     toc = {'children': [], "links":[link] }
     toc = get_toc(body,toc)
-    toc["flat_toc"] = flat_toc 
-    return toc 
+    toc["flat_toc"] = flat_toc
+    return toc
 
 def gen_pages(toc, space, parent_page, **kwargs):
 
@@ -341,7 +341,7 @@ def gen_pages(toc, space, parent_page, **kwargs):
 
     for child in toc['children']:
         gen_pages(child, space+"    ", parent_page=page, **kwargs)
-    
+
     if len(toc['children']) > 0:
         # order pages in line with the TOC
         token = kwargs['token']
@@ -365,7 +365,7 @@ def printToc(toc, space=""):
     if len(toc['links']) :
         if 'path' in toc['links'][0]:
             path = toc['links'][0]['path']
-            print space+path 
+            print space+path
         else:
             title = toc['links'][0]['title']
             print space+title
@@ -384,7 +384,7 @@ def find_obsolete_pages(applicable_pages, toc):
 def find_conflicting_pages(all_pages, applicable_pages, root_page, toc):
     titles = [p['title'].lower() for p in toc["flat_toc"]]
     desc_pages= [p['title'].lower() for p in applicable_pages]
-    g = lambda x, y, z: x not in y and x in z 
+    g = lambda x, y, z: x not in y and x in z
     conflicting_pages = [p for p in all_pages if g(p['title'].lower(), desc_pages, titles) ]
     return conflicting_pages
 
@@ -409,7 +409,7 @@ if __name__ == "__main__":
 
     args.toc_file = os.path.abspath(args.toc_file)
     if not os.path.isfile(args.toc_file):
-        print 'given file "'+args.toc_file+'" does not exist' 
+        print 'given file "'+args.toc_file+'" does not exist'
         parser.print_help()
         exit(2)
 
@@ -420,7 +420,7 @@ if __name__ == "__main__":
     #confluence_space= "DOC3"
 
     toc = parse_toc(args.toc_file, basedir)
-    
+
     if args.proxy:
         transport = HTTPProxyTransport({'http':args.proxy})
         service     = xmlrpclib.Server(  args.confluence_rpc_url, verbose=0, transport=transport)
@@ -431,11 +431,11 @@ if __name__ == "__main__":
     # fetch space information
     space       = service.confluence2.getSpace(token,args.confluence_space)
 
-    # fetch all pages in a space 
+    # fetch all pages in a space
     pages       = service.confluence2.getPages(token,args.confluence_space)
 
-    # identify the home page of the space 
-    #home_page   = fetch_space_home_page(space, pages) 
+    # identify the home page of the space
+    #home_page   = fetch_space_home_page(space, pages)
 
     # identify the root page to use
     root_page=None
@@ -491,7 +491,7 @@ if __name__ == "__main__":
     if len(obsolete_pages) > 0:
         print "Found obsolete pages under the given root:"
         for p in obsolete_pages: print "   -  "+p['title']
-    
+
         if args.delete_obsolete_pages:
             removePages(service, token, obsolete_pages)
             print "deleted obsolete pages"
