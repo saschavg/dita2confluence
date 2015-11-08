@@ -1,14 +1,20 @@
 #!/usr/bin/env python
 
-#revision: $Id$
+# revision: $Id$
 
-prog_description='''
+prog_description = '''
     This script uploads dita generated xhtml to confluence. It must be provided with the index.html containing the table of contents.
     All files including the toc it self will be uploaded to confluence preserving the structure of the TOC.
     it converts links and images to the confluence storage format. Links are changed to work in confluence. Images are uploaded as
     attachements to the relevant pages.
     The tile of a page is used as the identifier for the pages in confluence. When uploading, existing pages with the same title will
     be overwritten. Conflence will keep the old version. Also comments on the pages will be preserved.
+'''
+
+'''
+Notes:
+    Confluence identifies pages by their title. It does so in an case insensitive manner. Ensure to take this into account when
+    determining when a page already exists and needs to be updated or if the page is new.
 '''
 
 import sys, argparse
@@ -142,9 +148,9 @@ def uploadImages(service, images, pageId):
         attachement['fileName'] = os.path.basename(img['path'])
         #attachement['fileSize'] = len(data)
         attachement['contentType'] = mimetypes.guess_type(img['path'])[0]
+        print "uploading :" + img['path']
         if DO_UPLOAD:
             service.confluence2.addAttachment(token, pageId, attachement, xmlrpclib.Binary(data))
-        print "uploaded :" + img['path']
 
 def filter_decendant_pages(root_page, pages):
     filtered_pages = []
@@ -219,11 +225,14 @@ def storePage(html_file, parent_page, current_pages, rpc_service, token):
 
     page = {}
 
-    #check if page already exists and update in that case
-    r = [p for p in current_pages if p['title'] == title]
+    # check if page already exists and update in that case.
+    # ensure the check on the title is case insensitive
+    r = [p for p in current_pages if p['title'].lower() == title.lower()]
     if len(r) > 0 :
         print "updating existing page: " + title
         page = r[0]
+        # prevent people from beeing notified when this page is uploaded
+        page['minorEdit'] = True
     else :
         print "creating new page: " + title
 
