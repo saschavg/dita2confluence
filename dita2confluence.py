@@ -17,7 +17,7 @@ prog_description = '''
     with the index.html containing the table of contents. All files including
     the toc it self will be uploaded to confluence preserving the structure of
     the TOC. it converts links and images to the confluence storage format.
-    Links are changed to work in confluence. Images are uploaded as attachements
+    Links are changed to work in confluence. Images are uploaded as attachments
     to the relevant pages. The tile of a page is used as the identifier for the
     pages in confluence. When uploading, existing pages with the same title will
     be overwritten. Conflence will keep the old version. Also comments on the
@@ -63,6 +63,36 @@ class HTTPProxyTransport(Urllib2Transport):
     def __init__(self, proxies, use_datetime=0):
         opener = urllib2.build_opener(urllib2.ProxyHandler(proxies))
         Urllib2Transport.__init__(self, opener, use_datetime)
+
+
+def fetchAttachments(xml, rel_basedir):
+
+    links = xml.getElementsByTagName('a')
+    a_attachments = []
+    for link in filter(lambda l: re.match('xref',
+                                          l.getAttribute('class')), links):
+        path = urllib2.unquote(link.getAttribute('href'))
+        a_attachments.append({
+            "path": os.path.abspath(rel_basedir + "/" +path),
+            "name": os.path.basename(path),
+        })
+        title = ''.join([t.nodeValue for t in link.childNodes])
+
+        # remove any line breaks that might have been introduced by tidy
+        s = re.compile('\s+')
+        title = s.sub(' ', title)
+
+        acLink = xml.createElement('ac:link')
+        riFile = xml.createElement('ri:attachment')
+        riFile.setAttribute('ri:filename', a_attachments[-1]['name'])
+        acPTLB = xml.createElement('ac:plain-text-link-body')
+        cdata = xml.createCDATASection(title)
+        acPTLB.appendChild(cdata)
+        acLink.appendChild(riFile)
+        acLink.appendChild(acPTLB)
+        link.parentNode.replaceChild(acLink, link)
+        print acLink.toxml()
+    return a_attachments
 
 
 def fetchImages(xml, rel_basedir):
@@ -235,6 +265,7 @@ def storePage(html_file, parent_page, current_pages, rpc_service, token):
     title = fetchTitle(xml_doc)
     print title
     images = fetchImages(xml_doc, rel_basedir)
+    attachments = fetchAttachments(xml_doc, rel_basedir)
     updateLinks(xml_doc)
     content = xml_doc.getElementsByTagName('body')[0]
 
@@ -282,6 +313,11 @@ def storePage(html_file, parent_page, current_pages, rpc_service, token):
     else:
         print "no images found for upload"
     uploadImages(rpc_service, images, page.get('id'))
+    if len(attachments) > 0:
+        print "uploading attachments"
+    else:
+        print "no attachments found for upload"
+    uploadImages(rpc_service, attachments, page.get('id'))
 
     # pp.pprint(page)
     print "upload complete"
