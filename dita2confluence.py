@@ -71,9 +71,27 @@ def fetchAttachments(xml, rel_basedir):
     a_attachments = []
     for link in filter(lambda l: re.match('xref',
                                           l.getAttribute('class')), links):
-        path = urllib2.unquote(link.getAttribute('href'))
+
+        # filter abslolute links, html pages and references to the same page
+        # These links we leave them as they are.
+        href = link.getAttribute('href')
+        if href.startswith('http') or '#' in href or '.html' in href :
+            continue
+
+        # if we don't have the file that corresponds to the link, we assume
+        # it is not a valid attachement and we ignore it and leave the link as
+        # is
+        path = rel_basedir + "/" +urllib2.unquote(link.getAttribute('href'))
+        if not os.path.exists(path):
+            continue
+
+        # if we already have this attachement, don't upload it again
+        abspath = os.path.abspath(path)
+        if len([a for a in a_attachments if a["path"] == abspath]) > 0:
+            continue
+
         a_attachments.append({
-            "path": os.path.abspath(rel_basedir + "/" +path),
+            "path": abspath,
             "name": os.path.basename(path),
         })
         title = ''.join([t.nodeValue for t in link.childNodes])
